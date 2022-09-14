@@ -1,0 +1,56 @@
+---
+variables:
+
+
+include:
+  - remote: https://gitlab.com/dreamer-labs/repoman/gitlab-ci-templates/-/raw/master/.gitlab-ci-commitchecker.yml
+  - remote: https://gitlab.com/dreamer-labs/repoman/gitlab-ci-templates/-/raw/master/.gitlab-ci-generate-release.yml
+  - .gitlab-ci-functional-test.yml
+  - .gitlab-ci-release.yml
+
+stages:
+  - lint
+  - build
+
+nimlint:
+  image: ubuntu:20.04
+  stage: lint
+  only:
+    - merge_requests
+    - master
+  before_script:
+    - apt update && apt install -y gcc xz-utils curl
+    - (curl https://nim-lang.org/choosenim/init.sh -sSf > /tmp/init.sh; sh /tmp/init.sh -y; rm /tmp/init.sh)
+  script: |
+    for file in $(find . -type f -name "*.nim"); do
+      /root/.nimble/bin/nimpretty --out:/tmp/$file $file && diff /tmp/$file $file;
+      if [[ $? -ne 0 ]]; then
+        echo "Lint violation found... Exiting"
+        exit 1
+      fi
+    done
+
+nimbuild-linux:
+  image: nimlang/nim:latest
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_MESSAGE =~ /^chore\(release\)/ && $CI_COMMIT_TAG != null'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - if: '$CI_COMMIT_REF_NAME == "master"'
+      when: always
+  script: |
+    apt update && apt install -y curl make
+    bash build.sh linux-x86_64
+    bash build.sh mipssf
+  artifacts:
+    paths:
+      - bin/dumby-strings-linux-x86_64
+      - bin/dumby-strings-mipssf
+
+commitchecker:
+  before_script:
+    - apk add curl ca-certificates
+    - cp /etc/gitlab-runner/certs/ca.crt /usr/local/share/ca-certificates/ca.crt
+    - update-ca-certificates
